@@ -8,14 +8,16 @@ pub struct IconColor {
 }
 
 pub fn popup_icon_color(muted: bool, theme: Theme) -> IconColor {
+    // Matches the tray-icon convention: red flags a hot (unmuted) mic;
+    // neutral foreground (black/white per theme) means muted.
     match theme {
-        Theme::Light if muted => IconColor {
+        Theme::Light if !muted => IconColor {
             r: 239,
             g: 68,
             b: 68,
         }, // #ef4444
         Theme::Light => IconColor { r: 0, g: 0, b: 0 },
-        Theme::Dark if muted => IconColor {
+        Theme::Dark if !muted => IconColor {
             r: 248,
             g: 113,
             b: 113,

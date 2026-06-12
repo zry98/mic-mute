@@ -62,10 +62,12 @@ fn get_text_color(muted: bool, theme: Theme) -> id {
         let light_red = NSColor::colorWithRed_green_blue_alpha_(nil, 0.9725, 0.4431, 0.4431, 1.);
         let black = NSColor::colorWithRed_green_blue_alpha_(nil, 0., 0., 0., 1.);
         let white = NSColor::colorWithRed_green_blue_alpha_(nil, 1., 1., 1., 1.);
+        // Matches the tray-icon convention: red flags a hot (unmuted) mic;
+        // neutral foreground (black/white per theme) means muted.
         match theme {
-            Theme::Light if muted => dark_red,
+            Theme::Light if !muted => dark_red,
             Theme::Light => black,
-            Theme::Dark if muted => light_red,
+            Theme::Dark if !muted => light_red,
             _ => white,
         }
     }
