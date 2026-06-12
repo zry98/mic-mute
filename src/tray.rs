@@ -62,6 +62,7 @@ struct PreferredInputItem {
 pub struct Tray {
     pub systray: TrayIcon,
     pub toggle_mute: MenuItem,
+    pub mute_on_start: CheckMenuItem,
     pub launch_at_login: CheckMenuItem,
     pub show_in_dock: CheckMenuItem,
     pub about: MenuItem,
@@ -80,12 +81,15 @@ impl Tray {
         app_vars: AppVars,
         login_enabled: bool,
         dock_visible: bool,
+        mute_on_start_enabled: bool,
     ) -> Result<Self> {
         trace!("Creating tray icon");
         let icon = get_icon(muted, theme)?;
         let tray_menu = Menu::new();
         let toggle_mute = MenuItem::new(get_mute_menu_text(muted), true, None);
         let preferred_input_menu = Submenu::new("Preferred Input", true);
+        let mute_on_start =
+            CheckMenuItem::new("Mute on Start", true, mute_on_start_enabled, None);
         let launch_at_login = CheckMenuItem::new("Launch at Login", true, login_enabled, None);
         let show_in_dock = CheckMenuItem::new("Show in Dock", true, dock_visible, None);
         let about = MenuItem::new("About", true, None);
@@ -97,6 +101,7 @@ impl Tray {
                 &PredefinedMenuItem::separator(),
                 &preferred_input_menu,
                 &PredefinedMenuItem::separator(),
+                &mute_on_start,
                 &launch_at_login,
                 &show_in_dock,
                 &about,
@@ -121,6 +126,7 @@ impl Tray {
         let tray = Self {
             systray,
             toggle_mute,
+            mute_on_start,
             launch_at_login,
             show_in_dock,
             about,
@@ -161,6 +167,10 @@ impl Tray {
 
     pub fn launch_at_login_id(&self) -> &MenuId {
         self.launch_at_login.id()
+    }
+
+    pub fn mute_on_start_id(&self) -> &MenuId {
+        self.mute_on_start.id()
     }
 
     pub fn show_in_dock_id(&self) -> &MenuId {

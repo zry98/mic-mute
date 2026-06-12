@@ -2,7 +2,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+fn default_mute_on_start() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub show_in_dock: bool,
@@ -14,6 +18,21 @@ pub struct Settings {
     /// between sessions.
     #[serde(default)]
     pub preferred_input_device: Option<String>,
+    /// Mute the microphone immediately on app launch. Default true so the
+    /// safest state (mic off) is the starting point.
+    #[serde(default = "default_mute_on_start")]
+    pub mute_on_start: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            show_in_dock: false,
+            launch_at_login: false,
+            preferred_input_device: None,
+            mute_on_start: default_mute_on_start(),
+        }
+    }
 }
 
 impl Settings {
@@ -92,6 +111,7 @@ mod tests {
             show_in_dock: true,
             launch_at_login: false,
             preferred_input_device: Some("MacBook Pro Microphone".to_string()),
+            mute_on_start: false,
         };
 
         let json = serde_json::to_string_pretty(&s).unwrap();
@@ -104,6 +124,7 @@ mod tests {
             loaded.preferred_input_device.as_deref(),
             Some("MacBook Pro Microphone")
         );
+        assert!(!loaded.mute_on_start);
 
         let _ = fs::remove_file(&tmp_path);
     }
@@ -113,5 +134,13 @@ mod tests {
         let loaded: Settings = serde_json::from_str(r#"{"show_in_dock": true}"#).unwrap();
         assert!(loaded.show_in_dock);
         assert!(loaded.preferred_input_device.is_none());
+    }
+
+    #[test]
+    fn test_settings_default_mute_on_start_true() {
+        // Older configs without the field default to true (safe-by-default).
+        let loaded: Settings = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(loaded.mute_on_start);
+        assert!(Settings::default().mute_on_start);
     }
 }

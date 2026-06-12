@@ -61,11 +61,13 @@ impl UI {
             app_vars,
             settings.launch_at_login,
             settings.show_in_dock,
+            settings.mute_on_start,
         )
         .context("Failed to create system tray")?;
 
         let event_ids = EventIds {
             button_toggle_mute: tray.toggle_mute_id().clone(),
+            button_mute_on_start: tray.mute_on_start_id().clone(),
             button_launch_at_login: tray.launch_at_login_id().clone(),
             button_show_in_dock: tray.show_in_dock_id().clone(),
             button_about: tray.about_id().clone(),
@@ -127,6 +129,7 @@ impl UI {
         if let Some(tray) = &self.tray {
             tray.show_in_dock.set_checked(settings.show_in_dock);
             tray.launch_at_login.set_checked(settings.launch_at_login);
+            tray.mute_on_start.set_checked(settings.mute_on_start);
         }
         crate::launch_at_login::set_dock_visible(settings.show_in_dock);
         if let Err(e) = crate::launch_at_login::set(settings.launch_at_login) {

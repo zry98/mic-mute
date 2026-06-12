@@ -50,6 +50,7 @@ pub fn create() -> EventLoopMessage {
 
 pub struct EventIds {
     pub button_toggle_mute: MenuId,
+    pub button_mute_on_start: MenuId,
     pub button_launch_at_login: MenuId,
     pub button_show_in_dock: MenuId,
     pub button_about: MenuId,
@@ -275,6 +276,13 @@ pub fn start(
                 }
                 drop(s);
                 launch_at_login::set_dock_visible(visible);
+            } else if event.id == ids.button_mute_on_start {
+                let mut s = ctx.settings.write().unwrap();
+                s.mute_on_start = !s.mute_on_start;
+                trace!("Mute on Start toggled → {}", s.mute_on_start);
+                if let Err(e) = s.save() {
+                    log::error!("Failed to save settings: {}", e);
+                }
             } else if event.id == ids.button_about {
                 trace!("About tray menu item selected");
                 let mut s = ctx.settings.write().unwrap();

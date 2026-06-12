@@ -65,7 +65,13 @@ fn main() {
 
     let app_vars = AppVars::new();
 
-    let controller = MicController::new().unwrap();
+    let mut controller = MicController::new().unwrap();
+    if settings.mute_on_start && !controller.muted {
+        info!("Mute on Start enabled — muting microphone");
+        if let Err(e) = controller.toggle(Some(true)) {
+            log::error!("Failed to mute on startup: {}", e);
+        }
+    }
     let mic_muted = controller.muted;
     let controller = arc_lock(controller);
     trace!("Mic controller initialized {:?}", controller);
