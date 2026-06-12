@@ -11,7 +11,12 @@ use muda::MenuId;
 /// Event loop must remain on the main thread and doesn't implement Copy
 #[allow(dead_code)]
 pub struct UI {
-    tray: Tray,
+    /// `None` until `install_tray` is called from the event loop's
+    /// `StartCause::Init` handler — tray-icon requires the NSStatusItem to be
+    /// created *after* the runloop is running, otherwise the menu bar
+    /// half-initialises and produces a ghost icon on multi-monitor /
+    /// multi-Space setups (tauri-apps/tauri#9480, tauri-apps/tray-icon#90).
+    tray: Option<Tray>,
     popup: Popup,
     mic_muted: bool,
     /// Last (muted, device_name, volume) tuple actually rendered to the tray
@@ -25,16 +30,33 @@ unsafe impl Send for UI {}
 unsafe impl Sync for UI {}
 
 impl UI {
-    pub fn new(
-        mic_muted: bool,
-        app_vars: AppVars,
-        settings: &Settings,
-    ) -> Result<(Self, EventLoopMessage, EventIds)> {
+    pub fn new(mic_muted: bool) -> Result<(Self, EventLoopMessage)> {
         let event_loop = create();
         let popup = Popup::new(&event_loop, mic_muted).context("Failed to setup popup window")?;
-        let theme = popup.get_theme();
-        let tray = Tray::new(
+        let ui = Self {
+            tray: None,
+            popup,
             mic_muted,
+            last_render: None,
+        };
+        Ok((ui, event_loop))
+    }
+
+    /// Build the tray (creates the NSStatusItem). Must be called from the
+    /// event loop on `StartCause::Init` so the runloop is already pumping
+    /// when AppKit registers the status item — otherwise we get the ghost
+    /// icon described in the issues linked on `tray: Option<Tray>` above.
+    pub fn install_tray(
+        &mut self,
+        app_vars: AppVars,
+        settings: &Settings,
+    ) -> Result<EventIds> {
+        if self.tray.is_some() {
+            anyhow::bail!("Tray is already installed");
+        }
+        let theme = self.popup.get_theme();
+        let tray = Tray::new(
+            self.mic_muted,
             theme,
             app_vars,
             settings.launch_at_login,
@@ -49,14 +71,8 @@ impl UI {
             button_about: tray.about_id().clone(),
             button_quit: tray.quit_id().clone(),
         };
-
-        let ui = Self {
-            tray,
-            popup,
-            mic_muted,
-            last_render: None,
-        };
-        Ok((ui, event_loop, event_ids))
+        self.tray = Some(tray);
+        Ok(event_ids)
     }
 
     pub fn update_mic(
@@ -80,9 +96,10 @@ impl UI {
         }
         trace!("Updating UI mic state {}", muted);
         self.mic_muted = muted;
-        self.tray
-            .update(muted, self.popup.get_theme())
-            .context("Failed to update UI tray")?;
+        if let Some(tray) = &mut self.tray {
+            tray.update(muted, self.popup.get_theme())
+                .context("Failed to update UI tray")?;
+        }
         self.popup
             .update(muted, active_device_name, volume)
             .context("Failed to update UI popup")?;
@@ -106,14 +123,12 @@ impl UI {
     /// Apply all settings to the live app state.
     /// Safe to call whenever settings change — all operations are idempotent.
     pub fn apply_settings(&mut self, settings: &Settings) -> Result<()> {
-        // Sync dock visibility and its tray checkbox
-        self.tray.show_in_dock.set_checked(settings.show_in_dock);
+        // Sync tray checkboxes with persisted settings.
+        if let Some(tray) = &self.tray {
+            tray.show_in_dock.set_checked(settings.show_in_dock);
+            tray.launch_at_login.set_checked(settings.launch_at_login);
+        }
         crate::launch_at_login::set_dock_visible(settings.show_in_dock);
-
-        // Sync launch-at-login plist and its tray checkbox
-        self.tray
-            .launch_at_login
-            .set_checked(settings.launch_at_login);
         if let Err(e) = crate::launch_at_login::set(settings.launch_at_login) {
             log::error!("Failed to apply launch_at_login setting: {}", e);
         }
@@ -131,18 +146,22 @@ impl UI {
     /// Rebuild the "Preferred Input" submenu — checks the entry that matches
     /// the currently-pinned device (or "(None)" if no preference is set).
     /// Idempotent: only mutates the tray when something has actually changed.
+    /// No-op until the tray is installed.
     pub fn refresh_preferred_input(
         &mut self,
         controller: &MicController,
         preferred: Option<&str>,
     ) -> Result<()> {
+        let Some(tray) = &mut self.tray else {
+            return Ok(());
+        };
         let devices = controller.list_input_devices().unwrap_or_default();
-        self.tray.refresh_preferred_input(&devices, preferred)
+        tray.refresh_preferred_input(&devices, preferred)
     }
 
     /// Look up the "Preferred Input" submenu selection (if any) bound to the
     /// given menu id.
     pub fn preferred_input_for_menu_id(&self, id: &MenuId) -> Option<PreferredInputSelection> {
-        self.tray.preferred_input_for_menu_id(id)
+        self.tray.as_ref()?.preferred_input_for_menu_id(id)
     }
 }

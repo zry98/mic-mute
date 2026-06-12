@@ -6,6 +6,7 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+#[derive(Clone)]
 pub struct AppVars {
     pub name: String,
 }

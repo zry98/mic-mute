@@ -104,7 +104,7 @@ fn main() {
         }
     });
 
-    let (ui, event_loop, event_ids) = UI::new(mic_muted, app_vars, &settings).unwrap();
+    let (ui, event_loop) = UI::new(mic_muted).unwrap();
     trace!("UI initialized");
 
     // Start the SIGUSR1 listener thread now that we have an EventLoopProxy.
@@ -112,5 +112,5 @@ fn main() {
 
     let ui = arc_lock(ui);
     let settings = arc_lock(settings);
-    start(event_loop, event_ids, ui, controller, settings);
+    start(event_loop, ui, controller, settings, app_vars);
 }

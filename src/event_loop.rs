@@ -1,17 +1,19 @@
 use crate::about::show_about;
 use crate::audio_events::MuteListeners;
+use crate::config::AppVars;
 use crate::launch_at_login;
 use crate::mic::MicController;
 use crate::settings::Settings;
 use crate::tray::PreferredInputSelection;
 use crate::ui::UI;
 use async_std::task;
+use core_foundation_sys::runloop::{CFRunLoopGetMain, CFRunLoopWakeUp};
 use log::trace;
 use muda::{MenuEvent, MenuId};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
-use tao::event::Event;
+use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
 use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -146,19 +148,11 @@ pub fn restore_microphone_on_exit(controller: &Arc<RwLock<MicController>>) {
 
 pub fn start(
     mut event_loop: EventLoop<Message>,
-    event_ids: EventIds,
     ui: Arc<RwLock<UI>>,
     controller: Arc<RwLock<MicController>>,
     settings: Arc<RwLock<Settings>>,
+    app_vars: AppVars,
 ) {
-    let EventIds {
-        button_toggle_mute,
-        button_launch_at_login,
-        button_show_in_dock,
-        button_about,
-        button_quit,
-    } = event_ids;
-
     let poll_interval = Duration::from_millis(POLL_INTERVAL_MILLIS);
     // Start in the past so the first iteration triggers the poll immediately.
     let mut last_poll = Instant::now() - poll_interval;
@@ -189,10 +183,6 @@ pub fn start(
         popup_generation: Arc::new(AtomicU64::new(0)),
     };
 
-    // Populate the submenu once on startup, and enforce the preferred input
-    // device if the user has pinned one — listeners only fire on changes.
-    ctx.enforce_preferred_input();
-
     trace!("Starting event loop");
     // Set activation policy based on persisted show_in_dock before the loop starts.
     let initial_show_in_dock = ctx.settings.read().unwrap().show_in_dock;
@@ -201,10 +191,35 @@ pub fn start(
     } else {
         ActivationPolicy::Accessory
     });
+    // Populated during StartCause::Init below — we deliberately defer the
+    // NSStatusItem creation until the runloop is running to avoid the ghost
+    // status item on multi-monitor setups
+    // (tauri-apps/tauri#9480, tauri-apps/tray-icon#90).
+    let mut event_ids: Option<EventIds> = None;
     event_loop.run(move |event, _, control_flow| {
         let mut exit_requested = false;
 
         match event {
+            Event::NewEvents(StartCause::Init) => {
+                // tray-icon requires NSStatusItem to be created *after* the
+                // runloop is actively running — see comment on UI::tray.
+                let s = ctx.settings.read().unwrap();
+                let new_event_ids = ctx
+                    .ui
+                    .write()
+                    .unwrap()
+                    .install_tray(app_vars.clone(), &s)
+                    .expect("Failed to install system tray");
+                drop(s);
+                event_ids = Some(new_event_ids);
+                // Populate the Preferred Input submenu and enforce the pinned
+                // input device once on startup; listeners only fire on changes.
+                ctx.enforce_preferred_input();
+                // Kick the runloop so the freshly-registered NSStatusItem
+                // gets drawn immediately rather than on the next external
+                // event. Mirrors the recipe in tray-icon's tao/winit examples.
+                unsafe { CFRunLoopWakeUp(CFRunLoopGetMain()); }
+            }
             Event::UserEvent(Message::HidePopup(gen)) => {
                 // Ignore stale timers from earlier toggles.
                 if ctx.popup_generation.load(Ordering::Relaxed) == gen {
@@ -230,15 +245,15 @@ pub fn start(
             _ => {}
         };
 
-        if let Ok(event) = MenuEvent::receiver().try_recv() {
+        if let (Ok(event), Some(ids)) = (MenuEvent::receiver().try_recv(), event_ids.as_ref()) {
             trace!("Tray menu event: {:?}", event);
-            if event.id == button_quit {
+            if event.id == ids.button_quit {
                 trace!("Exit tray menu item selected");
                 exit_requested = true;
-            } else if event.id == button_toggle_mute {
+            } else if event.id == ids.button_toggle_mute {
                 trace!("Toggle mic tray menu item selected");
                 ctx.update_mic(true);
-            } else if event.id == button_launch_at_login {
+            } else if event.id == ids.button_launch_at_login {
                 trace!("Launch at login toggled");
                 let mut s = ctx.settings.write().unwrap();
                 s.launch_at_login = !s.launch_at_login;
@@ -250,7 +265,7 @@ pub fn start(
                 if let Err(e) = launch_at_login::set(enabled) {
                     log::error!("Launch at login error: {}", e);
                 }
-            } else if event.id == button_show_in_dock {
+            } else if event.id == ids.button_show_in_dock {
                 trace!("Show in dock toggled");
                 let mut s = ctx.settings.write().unwrap();
                 s.show_in_dock = !s.show_in_dock;
@@ -260,7 +275,7 @@ pub fn start(
                 }
                 drop(s);
                 launch_at_login::set_dock_visible(visible);
-            } else if event.id == button_about {
+            } else if event.id == ids.button_about {
                 trace!("About tray menu item selected");
                 let mut s = ctx.settings.write().unwrap();
                 match show_about(&mut s) {
