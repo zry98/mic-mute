@@ -1,22 +1,24 @@
 use crate::config::AppVars;
 use crate::event_loop::{create, EventIds, EventLoopMessage};
+use crate::mic::MicController;
 use crate::popup::Popup;
 use crate::settings::Settings;
-use crate::shortcuts::Shortcuts;
-use crate::tray::Tray;
+use crate::tray::{PreferredInputSelection, Tray};
 use anyhow::{Context, Result};
 use log::trace;
-use std::sync::atomic::AtomicU32;
-use std::sync::Arc;
+use muda::MenuId;
 
 /// Event loop must remain on the main thread and doesn't implement Copy
 #[allow(dead_code)]
 pub struct UI {
     tray: Tray,
     popup: Popup,
-    shortcuts: Shortcuts,
     mic_muted: bool,
-    camera_muted: bool,
+    /// Last (muted, device_name, volume) tuple actually rendered to the tray
+    /// + popup. The 200 ms enforce poll calls update_mic on every tick; this
+    /// lets us short-circuit when nothing the user can see has changed so we
+    /// don't keep re-issuing show_front / tray icon redraws.
+    last_render: Option<(bool, Option<String>, Option<f32>)>,
 }
 
 unsafe impl Send for UI {}
@@ -25,7 +27,6 @@ unsafe impl Sync for UI {}
 impl UI {
     pub fn new(
         mic_muted: bool,
-        camera_muted: bool,
         app_vars: AppVars,
         settings: &Settings,
     ) -> Result<(Self, EventLoopMessage, EventIds)> {
@@ -38,10 +39,8 @@ impl UI {
             app_vars,
             settings.launch_at_login,
             settings.show_in_dock,
-            &settings.mic_shortcut,
         )
         .context("Failed to create system tray")?;
-        let shortcuts = Shortcuts::new(settings).context("Failed to setup shortcuts")?;
 
         let event_ids = EventIds {
             button_toggle_mute: tray.toggle_mute_id().clone(),
@@ -49,15 +48,13 @@ impl UI {
             button_show_in_dock: tray.show_in_dock_id().clone(),
             button_about: tray.about_id().clone(),
             button_quit: tray.quit_id().clone(),
-            shortcut_mic: Arc::new(AtomicU32::new(shortcuts.mic_hotkey.id())),
         };
 
         let ui = Self {
             tray,
             popup,
-            shortcuts,
             mic_muted,
-            camera_muted,
+            last_render: None,
         };
         Ok((ui, event_loop, event_ids))
     }
@@ -66,24 +63,30 @@ impl UI {
         &mut self,
         muted: bool,
         active_device_name: Option<&str>,
+        volume: Option<f32>,
     ) -> Result<&mut Self> {
+        // Compare against the last rendered tuple without allocating a new
+        // owned String on the hot path — the enforce poll calls this every
+        // tick and most ticks are no-ops.
+        let unchanged = matches!(
+            &self.last_render,
+            Some((m, n, v))
+                if *m == muted
+                    && *v == volume
+                    && n.as_deref() == active_device_name
+        );
+        if unchanged {
+            return Ok(self);
+        }
         trace!("Updating UI mic state {}", muted);
         self.mic_muted = muted;
         self.tray
             .update(muted, self.popup.get_theme())
             .context("Failed to update UI tray")?;
         self.popup
-            .update_with_camera(muted, self.camera_muted, active_device_name)
+            .update(muted, active_device_name, volume)
             .context("Failed to update UI popup")?;
-        Ok(self)
-    }
-
-    pub fn update_camera(&mut self, muted: bool) -> Result<&mut Self> {
-        trace!("Updating UI camera state {}", muted);
-        self.camera_muted = muted;
-        self.popup
-            .update_with_camera(self.mic_muted, muted, None)
-            .context("Failed to update UI popup for camera")?;
+        self.last_render = Some((muted, active_device_name.map(str::to_string), volume));
         Ok(self)
     }
 
@@ -92,15 +95,17 @@ impl UI {
         Ok(self)
     }
 
+    /// Bring the popup to the front. Use this on user-initiated toggles so
+    /// both mute and unmute get visible feedback (the popup auto-hides 1 s
+    /// later via the HidePopup timer).
+    pub fn show_popup(&mut self) -> Result<&mut Self> {
+        self.popup.show().context("Failed to show UI popup")?;
+        Ok(self)
+    }
+
     /// Apply all settings to the live app state.
     /// Safe to call whenever settings change — all operations are idempotent.
     pub fn apply_settings(&mut self, settings: &Settings) -> Result<()> {
-        // Re-register hotkeys and update tray accelerator labels
-        self.shortcuts.reload(settings)?;
-        self.tray
-            .update_accelerators(&settings.mic_shortcut)
-            .context("Failed to update tray accelerators")?;
-
         // Sync dock visibility and its tray checkbox
         self.tray.show_in_dock.set_checked(settings.show_in_dock);
         crate::launch_at_login::set_dock_visible(settings.show_in_dock);
@@ -116,14 +121,28 @@ impl UI {
         Ok(())
     }
 
-    pub fn mic_shortcut_id(&self) -> u32 {
-        self.shortcuts.mic_hotkey.id()
-    }
-
     pub fn detect(&mut self) -> Result<&mut Self> {
         self.popup
             .detect_cursor_monitor()
             .context("Failed to update UI popup placement")?;
         Ok(self)
+    }
+
+    /// Rebuild the "Preferred Input" submenu — checks the entry that matches
+    /// the currently-pinned device (or "(None)" if no preference is set).
+    /// Idempotent: only mutates the tray when something has actually changed.
+    pub fn refresh_preferred_input(
+        &mut self,
+        controller: &MicController,
+        preferred: Option<&str>,
+    ) -> Result<()> {
+        let devices = controller.list_input_devices().unwrap_or_default();
+        self.tray.refresh_preferred_input(&devices, preferred)
+    }
+
+    /// Look up the "Preferred Input" submenu selection (if any) bound to the
+    /// given menu id.
+    pub fn preferred_input_for_menu_id(&self, id: &MenuId) -> Option<PreferredInputSelection> {
+        self.tray.preferred_input_for_menu_id(id)
     }
 }

@@ -1,14 +1,14 @@
 mod about;
-mod camera;
+mod audio_events;
 mod config;
 mod event_loop;
 mod icons;
+mod ipc;
 mod launch_at_login;
 mod mic;
 mod popup;
 mod popup_content;
 mod settings;
-mod shortcuts;
 mod tray;
 mod ui;
 mod utils;
@@ -17,7 +17,6 @@ mod utils;
 #[macro_use]
 extern crate objc;
 
-use crate::camera::CameraController;
 use crate::config::AppVars;
 use crate::event_loop::{restore_microphone_on_exit, start};
 use crate::mic::MicController;
@@ -38,6 +37,21 @@ extern "C" fn handle_signal(_: libc::c_int) {
 fn main() {
     Builder::from_env(Env::default().default_filter_or("trace")).init();
     info!("Starting app");
+
+    // Block SIGUSR1 process-wide BEFORE any thread spawns, so every later
+    // thread inherits the block. The dedicated IPC thread consumes signals
+    // via sigwait().
+    if let Err(e) = ipc::block_signals() {
+        log::error!("Failed to block SIGUSR1: {}", e);
+        std::process::exit(1);
+    }
+
+    // Refuse to start if another instance is already running. Privacy-critical:
+    // racing instances on CoreAudio could leave the mic unexpectedly hot.
+    if let Err(e) = ipc::write_pidfile() {
+        log::error!("{}", e);
+        std::process::exit(1);
+    }
 
     let mut settings = Settings::load();
 
@@ -73,20 +87,30 @@ fn main() {
         std::thread::sleep(Duration::from_millis(100));
         if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
             info!("Signal received — restoring microphone state before exit");
+            // Defense-in-depth: if restore hangs (e.g. a future deadlock in
+            // the main thread leaves controller.write() unobtainable), force
+            // the process to exit rather than blocking the user's terminal
+            // forever. The mic may remain in its current state in that case.
+            std::thread::spawn(|| {
+                std::thread::sleep(Duration::from_secs(3));
+                log::error!(
+                    "Shutdown watchdog tripped — force-exiting (mic may remain in last state)"
+                );
+                std::process::exit(1);
+            });
             restore_microphone_on_exit(&shutdown_controller);
+            ipc::cleanup_pidfile();
             std::process::exit(0);
         }
     });
 
-    let camera = CameraController::new().unwrap();
-    let camera_muted = camera.muted;
-    let camera = arc_lock(camera);
-    trace!("Camera controller initialized, muted={}", camera_muted);
-
-    let (ui, event_loop, event_ids) =
-        UI::new(mic_muted, camera_muted, app_vars, &settings).unwrap();
+    let (ui, event_loop, event_ids) = UI::new(mic_muted, app_vars, &settings).unwrap();
     trace!("UI initialized");
+
+    // Start the SIGUSR1 listener thread now that we have an EventLoopProxy.
+    ipc::start_signal_thread(event_loop.create_proxy());
+
     let ui = arc_lock(ui);
     let settings = arc_lock(settings);
-    start(event_loop, event_ids, ui, controller, camera, settings);
+    start(event_loop, event_ids, ui, controller, settings);
 }

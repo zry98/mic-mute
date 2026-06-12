@@ -7,10 +7,10 @@ use objc::runtime::Object;
 use tao::dpi::LogicalSize;
 use tao::window::Theme;
 
-const MUTED_DESCRIPTION: &str = "Mic off";
-const UNMUTED_DESCRIPTION: &str = "Mic on";
-const CAMERA_MUTED_DESCRIPTION: &str = "Camera off";
-const CAMERA_UNMUTED_DESCRIPTION: &str = "Camera on";
+const MUTED_DESCRIPTION: &str = "Mic OFF";
+const UNMUTED_DESCRIPTION: &str = "Mic ON";
+/// Truncate long device names so the popup doesn't blow out.
+const MAX_DEVICE_NAME: usize = 28;
 
 pub fn get_mic_mute_description_text(muted: bool) -> &'static str {
     if muted {
@@ -20,11 +20,27 @@ pub fn get_mic_mute_description_text(muted: bool) -> &'static str {
     }
 }
 
-pub fn get_camera_mute_description_text(muted: bool) -> &'static str {
-    if muted {
-        CAMERA_MUTED_DESCRIPTION
+/// Render the device-name + volume line, e.g. "MacBook Pro Microphone · 75%".
+/// Falls back gracefully when either piece is unknown.
+pub fn format_device_line(device_name: Option<&str>, volume: Option<f32>) -> String {
+    let name = device_name.unwrap_or("No input device");
+    let name = truncate_name(name);
+    match volume {
+        Some(v) => {
+            let pct = (v.clamp(0.0, 1.0) * 100.0).round() as i32;
+            format!("{name} · {pct}%")
+        }
+        None => name.to_string(),
+    }
+}
+
+fn truncate_name(name: &str) -> String {
+    if name.chars().count() <= MAX_DEVICE_NAME {
+        name.to_string()
     } else {
-        CAMERA_UNMUTED_DESCRIPTION
+        let mut s: String = name.chars().take(MAX_DEVICE_NAME - 1).collect();
+        s.push('…');
+        s
     }
 }
 
@@ -55,7 +71,20 @@ fn get_text_color(muted: bool, theme: Theme) -> id {
     }
 }
 
-fn get_textfield(text: &str, color: id, frame: NSRect) -> id {
+/// Neutral secondary label color — used for the device name line so it
+/// doesn't fight the red mic-muted indicator for attention.
+fn get_secondary_text_color(theme: Theme) -> id {
+    unsafe {
+        match theme {
+            Theme::Light => {
+                NSColor::colorWithRed_green_blue_alpha_(nil, 0.30, 0.30, 0.30, 1.)
+            }
+            _ => NSColor::colorWithRed_green_blue_alpha_(nil, 0.85, 0.85, 0.85, 1.),
+        }
+    }
+}
+
+fn get_textfield(text: &str, color: id, frame: NSRect, font_bump: f64) -> id {
     unsafe {
         let label = NSTextField::alloc(nil);
         let _: () = msg_send![label, initWithFrame: frame];
@@ -71,7 +100,8 @@ fn get_textfield(text: &str, color: id, frame: NSRect) -> id {
         let _: () = msg_send![label, setAlignment: NSALIGNMENT_CENTER];
         let ns_font = class!(NSFont);
         let default_size: f64 = msg_send![ns_font, systemFontSize];
-        let custom_font: *mut Object = msg_send![ns_font, systemFontOfSize: default_size + 3.0_f64];
+        let custom_font: *mut Object =
+            msg_send![ns_font, systemFontOfSize: default_size + font_bump];
         let _: () = msg_send![label, setFont: custom_font];
         label
     }
@@ -111,12 +141,6 @@ fn get_mic_image(muted: bool, theme: Theme) -> Result<id> {
     const MIC_ON: &[u8] = include_bytes!("../assets/mic.svg");
     const MIC_OFF: &[u8] = include_bytes!("../assets/mic-off.svg");
     svg_to_ns_image(if muted { MIC_OFF } else { MIC_ON }, muted, theme)
-}
-
-fn get_camera_image(muted: bool, theme: Theme) -> Result<id> {
-    const VIDEO_ON: &[u8] = include_bytes!("../assets/video.svg");
-    const VIDEO_OFF: &[u8] = include_bytes!("../assets/video-off.svg");
-    svg_to_ns_image(if muted { VIDEO_OFF } else { VIDEO_ON }, muted, theme)
 }
 
 fn make_image_view(image: id, frame: NSRect) -> id {
@@ -159,15 +183,15 @@ unsafe fn make_separator_view(line_height: f64) -> id {
 pub struct PopupContent {
     mic_label: id,
     mic_image: id,
-    camera_image: id,
-    camera_label: id,
+    device_label: id,
     pub view: id,
 }
 
 impl PopupContent {
     pub fn new(
         mic_muted: bool,
-        camera_muted: bool,
+        device_name: Option<&str>,
+        volume: Option<f32>,
         size: LogicalSize<f64>,
         theme: Theme,
     ) -> Result<Self> {
@@ -177,21 +201,18 @@ impl PopupContent {
             get_mic_mute_description_text(mic_muted),
             get_text_color(mic_muted, theme),
             frame,
+            3.0,
         );
         let mic_ns_image = get_mic_image(mic_muted, theme)?;
         let mic_image = make_image_view(mic_ns_image, frame);
         unsafe {
             let _: () = msg_send![mic_ns_image, release];
         }
-        let camera_ns_image = get_camera_image(camera_muted, theme)?;
-        let camera_image = make_image_view(camera_ns_image, frame);
-        unsafe {
-            let _: () = msg_send![camera_ns_image, release];
-        }
-        let camera_label = get_textfield(
-            get_camera_mute_description_text(camera_muted),
-            get_text_color(camera_muted, theme),
+        let device_label = get_textfield(
+            &format_device_line(device_name, volume),
+            get_secondary_text_color(theme),
             frame,
+            1.0,
         );
 
         let view = unsafe {
@@ -205,18 +226,15 @@ impl PopupContent {
             let sep = make_separator_view(frame.size.height);
             let _: () = msg_send![stack, addView: sep inGravity: GRAVITY_CENTER];
             let _: () = msg_send![sep, release];
-            let _: () = msg_send![stack, addView: camera_image inGravity: GRAVITY_CENTER];
-            let _: () = msg_send![camera_image, release];
-            let _: () = msg_send![stack, addView: camera_label inGravity: GRAVITY_CENTER];
-            let _: () = msg_send![camera_label, release];
+            let _: () = msg_send![stack, addView: device_label inGravity: GRAVITY_CENTER];
+            let _: () = msg_send![device_label, release];
             stack
         };
 
         Ok(Self {
             mic_label,
             mic_image,
-            camera_image,
-            camera_label,
+            device_label,
             view,
         })
     }
@@ -224,12 +242,11 @@ impl PopupContent {
     pub fn update(
         &mut self,
         mic_muted: bool,
-        camera_muted: bool,
+        device_name: Option<&str>,
+        volume: Option<f32>,
         theme: Theme,
-        _active_device_name: Option<&str>,
     ) -> Result<&mut Self> {
         let mic_img = get_mic_image(mic_muted, theme)?;
-        let cam_img = get_camera_image(camera_muted, theme)?;
         unsafe {
             let mic_str = NSString::alloc(nil).init_str(get_mic_mute_description_text(mic_muted));
             self.mic_label.setStringValue_(mic_str);
@@ -237,14 +254,13 @@ impl PopupContent {
             let _: () = msg_send![self.mic_label, setTextColor: get_text_color(mic_muted, theme)];
             self.mic_image.setImage_(mic_img);
             let _: () = msg_send![mic_img, release];
-            self.camera_image.setImage_(cam_img);
-            let _: () = msg_send![cam_img, release];
-            let cam_str =
-                NSString::alloc(nil).init_str(get_camera_mute_description_text(camera_muted));
-            self.camera_label.setStringValue_(cam_str);
-            let _: () = msg_send![cam_str, release];
+
+            let device_str =
+                NSString::alloc(nil).init_str(&format_device_line(device_name, volume));
+            self.device_label.setStringValue_(device_str);
+            let _: () = msg_send![device_str, release];
             let _: () =
-                msg_send![self.camera_label, setTextColor: get_text_color(camera_muted, theme)];
+                msg_send![self.device_label, setTextColor: get_secondary_text_color(theme)];
         }
         Ok(self)
     }
@@ -256,11 +272,56 @@ mod tests {
 
     #[test]
     fn test_mic_mute_description_muted() {
-        assert_eq!(get_mic_mute_description_text(true), "Mic off");
+        assert_eq!(get_mic_mute_description_text(true), "Mic OFF");
     }
 
     #[test]
     fn test_mic_mute_description_unmuted() {
-        assert_eq!(get_mic_mute_description_text(false), "Mic on");
+        assert_eq!(get_mic_mute_description_text(false), "Mic ON");
+    }
+
+    #[test]
+    fn format_device_line_full() {
+        assert_eq!(
+            format_device_line(Some("MacBook Pro Microphone"), Some(0.75)),
+            "MacBook Pro Microphone · 75%"
+        );
+    }
+
+    #[test]
+    fn format_device_line_no_volume() {
+        assert_eq!(
+            format_device_line(Some("Some Mic"), None),
+            "Some Mic"
+        );
+    }
+
+    #[test]
+    fn format_device_line_no_device() {
+        assert_eq!(format_device_line(None, None), "No input device");
+    }
+
+    #[test]
+    fn format_device_line_truncates_long_names() {
+        let line =
+            format_device_line(Some("A very very very long external microphone name"), Some(0.5));
+        assert!(line.contains('…'));
+        assert!(line.ends_with(" · 50%"));
+    }
+
+    #[test]
+    fn format_device_line_rounds_volume() {
+        assert_eq!(
+            format_device_line(Some("Mic"), Some(0.499)),
+            "Mic · 50%"
+        );
+        assert_eq!(
+            format_device_line(Some("Mic"), Some(0.0)),
+            "Mic · 0%"
+        );
+        assert_eq!(
+            format_device_line(Some("Mic"), Some(1.0)),
+            "Mic · 100%"
+        );
     }
 }

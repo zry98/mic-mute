@@ -65,7 +65,6 @@ pub struct Popup {
 
 impl Popup {
     pub fn new(event_loop: &EventLoopMessage, mic_muted: bool) -> Result<Self> {
-        let camera_muted = false;
         let initial_monitor = Popup::get_initial_monitor(event_loop);
         let size = Popup::get_size();
         let scale = initial_monitor
@@ -96,7 +95,7 @@ impl Popup {
         window.set_ignore_cursor_events(true)?;
 
         trace!("Window scale factor {}", scale);
-        let content = PopupContent::new(mic_muted, camera_muted, size, window.theme())?;
+        let content = PopupContent::new(mic_muted, None, None, size, window.theme())?;
         unsafe {
             let ns_view = window.ns_view() as id;
             ns_view.addSubview_(content.view);
@@ -114,30 +113,31 @@ impl Popup {
     }
 
     fn get_size() -> WindowSize {
-        LogicalSize::new(250., 40.)
+        LogicalSize::new(340., 40.)
     }
 
     pub fn get_theme(&self) -> Theme {
         self.window.theme()
     }
 
-    pub fn update_with_camera(
+    /// Refresh the popup's title, placement, and content. Does NOT change
+    /// visibility — call `show()` to make it appear, `hide()` to hide it.
+    pub fn update(
         &mut self,
         mic_muted: bool,
-        camera_muted: bool,
         active_device_name: Option<&str>,
+        volume: Option<f32>,
     ) -> Result<&mut Self> {
         self.window.set_title(get_mute_title_text(mic_muted));
         self.update_placement()?;
-        self.content.update(
-            mic_muted,
-            camera_muted,
-            self.get_theme(),
-            active_device_name,
-        )?;
-        if mic_muted {
-            self.show_front();
-        }
+        self.content
+            .update(mic_muted, active_device_name, volume, self.get_theme())?;
+        Ok(self)
+    }
+
+    /// Bring the popup to the front, reasserting visibility.
+    pub fn show(&mut self) -> Result<&mut Self> {
+        self.show_front();
         Ok(self)
     }
 

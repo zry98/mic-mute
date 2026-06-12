@@ -30,16 +30,17 @@ pub fn popup_icon_color(muted: bool, theme: Theme) -> IconColor {
 
 pub fn tray_icon_color(muted: bool) -> IconColor {
     if muted {
+        // Drawn black; the tray icon is set as a macOS template image, so
+        // the system tints it (black on a light menu bar, white on a dark
+        // one) — same behavior as built-in system icons.
+        IconColor { r: 0, g: 0, b: 0 }
+    } else {
+        // #ef4444 — red, used to flag that the mic is hot. Not a template,
+        // so the color is preserved regardless of menu-bar appearance.
         IconColor {
             r: 239,
             g: 68,
             b: 68,
-        } // #ef4444
-    } else {
-        IconColor {
-            r: 255,
-            g: 255,
-            b: 255,
         }
     }
 }

@@ -17,7 +17,6 @@ tray-icon = "0.24"
 muda = "0.19"
 image = "0.25"
 resvg = "0.47"
-global-hotkey = "0.8"
 async-std = "1"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

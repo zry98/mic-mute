@@ -83,6 +83,7 @@ pub trait AudioBackend {
     fn get_volume(&self, audio_device_id: AudioDeviceID) -> Result<Option<f32>>;
     fn set_volume(&mut self, audio_device_id: AudioDeviceID, volume: f32) -> Result<Option<()>>;
     fn default_input_device(&self) -> Result<Option<AudioDeviceID>>;
+    fn set_default_input_device(&mut self, audio_device_id: AudioDeviceID) -> Result<()>;
 }
 
 #[derive(Default)]
@@ -351,6 +352,27 @@ impl AudioBackend for CoreAudioBackend {
         }
         Ok(Some(device_id))
     }
+
+    fn set_default_input_device(&mut self, audio_device_id: AudioDeviceID) -> Result<()> {
+        let mut property_address = AudioObjectPropertyAddress {
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain,
+        };
+        let mut id_copy = audio_device_id;
+        let data_size = mem::size_of::<AudioDeviceID>() as u32;
+        let status = unsafe {
+            AudioObjectSetPropertyData(
+                SYSTEM_OBJECT_ID,
+                NonNull::new_unchecked(&mut property_address),
+                0,
+                null(),
+                data_size,
+                NonNull::new_unchecked(&mut id_copy as *mut AudioDeviceID as *mut c_void),
+            )
+        };
+        status_result(status, "set default input device", audio_device_id)
+    }
 }
 
 pub struct MicController<B = CoreAudioBackend> {
@@ -419,6 +441,15 @@ impl<B: AudioBackend> MicController<B> {
             names.push(format!("{}: {}", id, name));
         }
         Ok(names)
+    }
+
+    /// Union of every device we've muted (either natively or via volume
+    /// fallback). Used by the property-listener layer to keep per-device
+    /// mute/volume listeners aligned with what we've actually muted.
+    pub fn tracked_device_ids(&self) -> HashSet<AudioDeviceID> {
+        let mut ids = self.native_muted_devices.clone();
+        ids.extend(self.saved_volumes.keys().copied());
+        ids
     }
 
     fn get_input_device_ids(&self) -> Result<Vec<AudioDeviceID>> {
@@ -623,6 +654,25 @@ impl<B: AudioBackend> MicController<B> {
     pub fn mute_all(&mut self, state: bool) -> Result<&Self> {
         self.desired_muted = state;
         let ids = self.get_input_device_ids()?;
+
+        // Fast path: if every controllable device is already in the desired
+        // state, skip the per-device set+verify work (and its trace noise).
+        // Single-pass to keep trace volume to one read per device per tick.
+        let mut all_match = true;
+        let mut any_controllable = false;
+        for id in &ids {
+            if let Some(actual) = self.is_muted(*id)? {
+                any_controllable = true;
+                if actual != state {
+                    all_match = false;
+                }
+            }
+        }
+        if all_match {
+            self.muted = any_controllable && state;
+            return Ok(self);
+        }
+
         let mut failures = Vec::new();
         for id in &ids {
             let name = self.backend.device_name(*id)?;
@@ -729,6 +779,43 @@ impl<B: AudioBackend> MicController<B> {
             .ok()
             .flatten()
             .and_then(|device_id| self.backend.device_name(device_id).ok())
+    }
+
+    /// Returns the AudioDeviceID of the default system input device, if available.
+    pub fn current_input_device_id(&self) -> Option<AudioDeviceID> {
+        self.backend.default_input_device().ok().flatten()
+    }
+
+    /// Returns input volume (0.0..=1.0) for the current default input device, if readable.
+    pub fn current_input_volume(&self) -> Option<f32> {
+        let id = self.current_input_device_id()?;
+        self.backend.get_volume(id).ok().flatten()
+    }
+
+    /// Enumerate input devices as (id, name) pairs.
+    pub fn list_input_devices(&self) -> Result<Vec<(AudioDeviceID, String)>> {
+        let mut devices = Vec::new();
+        for id in self.get_input_device_ids()? {
+            let name = self.backend.device_name(id)?;
+            devices.push((id, name));
+        }
+        Ok(devices)
+    }
+
+    /// Look up an input device by name. Used when the user has pinned a
+    /// preferred device and we need to translate the persisted name back to
+    /// an AudioDeviceID (which is unstable across sessions).
+    pub fn find_input_device_id_by_name(&self, name: &str) -> Option<AudioDeviceID> {
+        self.list_input_devices()
+            .ok()?
+            .into_iter()
+            .find(|(_, n)| n == name)
+            .map(|(id, _)| id)
+    }
+
+    /// Switch the system default input device. Mirrors switchaudio-osx's setDevice.
+    pub fn set_default_input_device(&mut self, audio_device_id: AudioDeviceID) -> Result<()> {
+        self.backend.set_default_input_device(audio_device_id)
     }
 }
 
@@ -872,6 +959,11 @@ mod tests {
 
         fn default_input_device(&self) -> Result<Option<AudioDeviceID>> {
             Ok(self.default_input)
+        }
+
+        fn set_default_input_device(&mut self, audio_device_id: AudioDeviceID) -> Result<()> {
+            self.default_input = Some(audio_device_id);
+            Ok(())
         }
     }
 
