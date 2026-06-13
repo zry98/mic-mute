@@ -32,9 +32,16 @@ pub enum Message {
     HidePopup(u64),
     /// Out-of-process toggle request (from the SIGUSR1 IPC thread).
     ToggleMic,
-    /// CoreAudio fired a property listener for the device set or the system
-    /// default input device. Rebuild the input-device submenu.
-    InputDevicesChanged,
+    /// `kAudioHardwarePropertyDevices` fired: an input device was added or
+    /// removed (hotplug, e.g. AirPods connecting). Refresh the submenu list
+    /// AND re-enforce the preferred input — this is the path that defeats
+    /// macOS's auto-switch to a newly-connected device.
+    InputDeviceSetChanged,
+    /// `kAudioHardwarePropertyDefaultInputDevice` fired without a device-set
+    /// change: the user or some other app picked a different default. Do
+    /// NOT enforce preferred — the user might be intentionally switching.
+    /// Just refresh the popup's device-name display so it stays accurate.
+    DefaultInputDeviceChanged,
     /// A per-device mute/volume property listener fired — something
     /// (possibly another app) changed mute or volume on a device we've
     /// muted. Re-assert the desired state.
@@ -231,12 +238,20 @@ pub fn start(
                 trace!("ToggleMic event received from IPC");
                 ctx.update_mic(true);
             }
-            Event::UserEvent(Message::InputDevicesChanged) => {
-                trace!("CoreAudio device set/default changed — enforcing preference + mute");
+            Event::UserEvent(Message::InputDeviceSetChanged) => {
+                trace!("Input device set changed (hotplug) — enforcing preference + mute");
                 ctx.enforce_preferred_input();
                 // A new input device may have appeared. Re-enforce mute so
                 // any newly-discovered device gets muted right away when
                 // we're already in desired_muted state.
+                ctx.update_mic(false);
+            }
+            Event::UserEvent(Message::DefaultInputDeviceChanged) => {
+                trace!("Default input device changed — refreshing popup display");
+                // Do NOT enforce preferred here — the user may have just
+                // switched intentionally via Sound Settings. We only resync
+                // the popup's device-name display via the enforce-path of
+                // update_mic (which is a no-op when nothing actually moved).
                 ctx.update_mic(false);
             }
             Event::UserEvent(Message::ExternalMuteChanged(device_id)) => {

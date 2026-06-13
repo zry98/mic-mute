@@ -46,16 +46,33 @@ unsafe impl Sync for DeviceListeners {}
 
 unsafe extern "C-unwind" fn listener_proc(
     _object_id: AudioObjectID,
-    _num_addresses: u32,
-    _addresses: NonNull<AudioObjectPropertyAddress>,
+    num_addresses: u32,
+    addresses: NonNull<AudioObjectPropertyAddress>,
     client_data: *mut c_void,
 ) -> i32 {
     if client_data.is_null() {
         return 0;
     }
     let proxy = &*(client_data as *const EventLoopProxyMessage);
-    if let Err(e) = proxy.send_event(Message::InputDevicesChanged) {
-        warn!("Event loop closed; dropping InputDevicesChanged: {:?}", e);
+    let addrs = std::slice::from_raw_parts(addresses.as_ptr(), num_addresses as usize);
+    let mut device_set_changed = false;
+    let mut default_changed = false;
+    for addr in addrs {
+        if addr.mSelector == kAudioHardwarePropertyDevices {
+            device_set_changed = true;
+        } else if addr.mSelector == kAudioHardwarePropertyDefaultInputDevice {
+            default_changed = true;
+        }
+    }
+    if device_set_changed {
+        if let Err(e) = proxy.send_event(Message::InputDeviceSetChanged) {
+            warn!("Event loop closed; dropping InputDeviceSetChanged: {:?}", e);
+        }
+    }
+    if default_changed {
+        if let Err(e) = proxy.send_event(Message::DefaultInputDeviceChanged) {
+            warn!("Event loop closed; dropping DefaultInputDeviceChanged: {:?}", e);
+        }
     }
     0
 }
