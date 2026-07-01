@@ -19,8 +19,9 @@ builds:
     hooks:
       post:
         - cargo bundle --release --target aarch64-apple-darwin
+        - codesign --force --deep --sign - "target/aarch64-apple-darwin/release/bundle/osx/Mic Mute.app"
         - mkdir -p dist-dmg
-        - cp "target/aarch64-apple-darwin/release/bundle/dmg/Mic Mute.dmg" "dist-dmg/mic-mute-{{ .Version }}-aarch64-apple-darwin.dmg"
+        - hdiutil create -volname "Mic Mute" -srcfolder target/aarch64-apple-darwin/release/bundle/osx -ov -format UDZO dist-dmg/mic-mute-{{ .Version }}-aarch64-apple-darwin.dmg
 
 archives:
   - id: mic-mute
