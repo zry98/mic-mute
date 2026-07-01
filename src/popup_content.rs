@@ -78,9 +78,7 @@ fn get_text_color(muted: bool, theme: Theme) -> id {
 fn get_secondary_text_color(theme: Theme) -> id {
     unsafe {
         match theme {
-            Theme::Light => {
-                NSColor::colorWithRed_green_blue_alpha_(nil, 0.30, 0.30, 0.30, 1.)
-            }
+            Theme::Light => NSColor::colorWithRed_green_blue_alpha_(nil, 0.30, 0.30, 0.30, 1.),
             _ => NSColor::colorWithRed_green_blue_alpha_(nil, 0.85, 0.85, 0.85, 1.),
         }
     }
@@ -261,8 +259,7 @@ impl PopupContent {
                 NSString::alloc(nil).init_str(&format_device_line(device_name, volume));
             self.device_label.setStringValue_(device_str);
             let _: () = msg_send![device_str, release];
-            let _: () =
-                msg_send![self.device_label, setTextColor: get_secondary_text_color(theme)];
+            let _: () = msg_send![self.device_label, setTextColor: get_secondary_text_color(theme)];
         }
         Ok(self)
     }
@@ -292,10 +289,7 @@ mod tests {
 
     #[test]
     fn format_device_line_no_volume() {
-        assert_eq!(
-            format_device_line(Some("Some Mic"), None),
-            "Some Mic"
-        );
+        assert_eq!(format_device_line(Some("Some Mic"), None), "Some Mic");
     }
 
     #[test]
@@ -305,25 +299,18 @@ mod tests {
 
     #[test]
     fn format_device_line_truncates_long_names() {
-        let line =
-            format_device_line(Some("A very very very long external microphone name"), Some(0.5));
+        let line = format_device_line(
+            Some("A very very very long external microphone name"),
+            Some(0.5),
+        );
         assert!(line.contains('…'));
         assert!(line.ends_with(" · 50%"));
     }
 
     #[test]
     fn format_device_line_rounds_volume() {
-        assert_eq!(
-            format_device_line(Some("Mic"), Some(0.499)),
-            "Mic · 50%"
-        );
-        assert_eq!(
-            format_device_line(Some("Mic"), Some(0.0)),
-            "Mic · 0%"
-        );
-        assert_eq!(
-            format_device_line(Some("Mic"), Some(1.0)),
-            "Mic · 100%"
-        );
+        assert_eq!(format_device_line(Some("Mic"), Some(0.499)), "Mic · 50%");
+        assert_eq!(format_device_line(Some("Mic"), Some(0.0)), "Mic · 0%");
+        assert_eq!(format_device_line(Some("Mic"), Some(1.0)), "Mic · 100%");
     }
 }

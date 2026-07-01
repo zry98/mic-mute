@@ -20,7 +20,7 @@ pub struct UI {
     popup: Popup,
     mic_muted: bool,
     /// Last (muted, device_name, volume) tuple actually rendered to the tray
-    /// + popup. The 200 ms enforce poll calls update_mic on every tick; this
+    /// and popup. The 200 ms enforce poll calls update_mic on every tick; this
     /// lets us short-circuit when nothing the user can see has changed so we
     /// don't keep re-issuing show_front / tray icon redraws.
     last_render: Option<(bool, Option<String>, Option<f32>)>,
@@ -46,11 +46,7 @@ impl UI {
     /// event loop on `StartCause::Init` so the runloop is already pumping
     /// when AppKit registers the status item — otherwise we get the ghost
     /// icon described in the issues linked on `tray: Option<Tray>` above.
-    pub fn install_tray(
-        &mut self,
-        app_vars: AppVars,
-        settings: &Settings,
-    ) -> Result<EventIds> {
+    pub fn install_tray(&mut self, app_vars: AppVars, settings: &Settings) -> Result<EventIds> {
         if self.tray.is_some() {
             anyhow::bail!("Tray is already installed");
         }

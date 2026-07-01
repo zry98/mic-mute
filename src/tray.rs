@@ -88,8 +88,7 @@ impl Tray {
         let tray_menu = Menu::new();
         let toggle_mute = MenuItem::new(get_mute_menu_text(muted), true, None);
         let preferred_input_menu = Submenu::new("Preferred Input", true);
-        let mute_on_start =
-            CheckMenuItem::new("Mute on Start", true, mute_on_start_enabled, None);
+        let mute_on_start = CheckMenuItem::new("Mute on Start", true, mute_on_start_enabled, None);
         let launch_at_login = CheckMenuItem::new("Launch at Login", true, login_enabled, None);
         let show_in_dock = CheckMenuItem::new("Show in Dock", true, dock_visible, None);
         let about = MenuItem::new("About", true, None);

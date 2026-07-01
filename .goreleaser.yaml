@@ -5,11 +5,6 @@ version: 2
 
 project_name: mic-mute
 
-before:
-  hooks:
-    - rustup default stable
-    - cargo fetch --locked
-
 builds:
   - id: mic-mute
     builder: rust
@@ -21,11 +16,16 @@ builds:
     flags:
       - --release
       - --locked
+    hooks:
+      post:
+        - cargo bundle --release --target aarch64-apple-darwin
+        - mkdir -p dist-dmg
+        - cp "target/aarch64-apple-darwin/release/bundle/dmg/Mic Mute.dmg" "dist-dmg/mic-mute-{{ .Version }}-aarch64-apple-darwin.dmg"
 
 archives:
   - id: mic-mute
     formats: [tar.gz]
-    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Target }}"
+    name_template: "{{ .ProjectName }}-{{ .Version }}-aarch64-apple-darwin"
 
 checksum:
   name_template: checksums.txt
@@ -44,5 +44,7 @@ release:
   github:
     owner: zry98
     name: mic-mute
-  draft: true
+  draft: false
   prerelease: auto
+  extra_files:
+    - glob: dist-dmg/mic-mute-*-aarch64-apple-darwin.dmg

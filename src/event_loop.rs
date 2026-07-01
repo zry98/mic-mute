@@ -96,7 +96,8 @@ impl EventLoopCtx {
             self.mute_listeners.lock().unwrap().sync(&tracked);
 
             let mut ui = self.ui.write().unwrap();
-            ui.update_mic(muted, device_name.as_deref(), volume).unwrap();
+            ui.update_mic(muted, device_name.as_deref(), volume)
+                .unwrap();
             // Show the popup as transient feedback for user-initiated toggles
             // (mute or unmute). The HidePopup timer scheduled below tucks it
             // back away after 1 s. Enforce paths do not show the popup.
@@ -130,8 +131,17 @@ impl EventLoopCtx {
             };
             if current_name.as_deref() != Some(name) {
                 if let Some(id) = target_id {
-                    trace!("Enforcing preferred input '{}' → AudioDeviceID {}", name, id);
-                    if let Err(e) = self.controller.write().unwrap().set_default_input_device(id) {
+                    trace!(
+                        "Enforcing preferred input '{}' → AudioDeviceID {}",
+                        name,
+                        id
+                    );
+                    if let Err(e) = self
+                        .controller
+                        .write()
+                        .unwrap()
+                        .set_default_input_device(id)
+                    {
                         log::error!("Failed to enforce preferred input: {}", e);
                     }
                 } else {
@@ -173,9 +183,8 @@ pub fn start(
 
     // Register CoreAudio property listeners that push InputDevicesChanged into
     // the event loop. Held in a local so the OS cleans up at process exit.
-    let _audio_listeners =
-        crate::audio_events::DeviceListeners::install(event_loop.create_proxy())
-            .expect("Failed to install CoreAudio property listeners");
+    let _audio_listeners = crate::audio_events::DeviceListeners::install(event_loop.create_proxy())
+        .expect("Failed to install CoreAudio property listeners");
 
     let ctx = EventLoopCtx {
         ui,
@@ -226,7 +235,9 @@ pub fn start(
                 // Kick the runloop so the freshly-registered NSStatusItem
                 // gets drawn immediately rather than on the next external
                 // event. Mirrors the recipe in tray-icon's tao/winit examples.
-                unsafe { CFRunLoopWakeUp(CFRunLoopGetMain()); }
+                unsafe {
+                    CFRunLoopWakeUp(CFRunLoopGetMain());
+                }
             }
             Event::UserEvent(Message::HidePopup(gen)) => {
                 // Ignore stale timers from earlier toggles.
@@ -255,7 +266,10 @@ pub fn start(
                 ctx.update_mic(false);
             }
             Event::UserEvent(Message::ExternalMuteChanged(device_id)) => {
-                trace!("Per-device listener fired for {} — re-asserting mute", device_id);
+                trace!(
+                    "Per-device listener fired for {} — re-asserting mute",
+                    device_id
+                );
                 ctx.update_mic(false);
             }
             _ => {}
@@ -338,27 +352,25 @@ pub fn start(
                     let c = ctx.controller.read().unwrap();
                     (c.muted, c.active_device_name(), c.current_input_volume())
                 };
-                if let Err(e) = ctx
-                    .ui
-                    .write()
-                    .unwrap()
-                    .update_mic(muted, device_name.as_deref(), volume)
+                if let Err(e) =
+                    ctx.ui
+                        .write()
+                        .unwrap()
+                        .update_mic(muted, device_name.as_deref(), volume)
                 {
                     log::error!("Failed to update mic UI after preferred change: {}", e);
                 }
             }
         }
 
-        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                trace!("Tray icon left-clicked — toggling mic");
-                ctx.update_mic(true);
-            }
+        if let Ok(TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        }) = TrayIconEvent::receiver().try_recv()
+        {
+            trace!("Tray icon left-clicked — toggling mic");
+            ctx.update_mic(true);
         }
 
         // Reload settings if the file has been modified since we last checked.

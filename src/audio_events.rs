@@ -71,7 +71,10 @@ unsafe extern "C-unwind" fn listener_proc(
     }
     if default_changed {
         if let Err(e) = proxy.send_event(Message::DefaultInputDeviceChanged) {
-            warn!("Event loop closed; dropping DefaultInputDeviceChanged: {:?}", e);
+            warn!(
+                "Event loop closed; dropping DefaultInputDeviceChanged: {:?}",
+                e
+            );
         }
     }
     0
@@ -255,7 +258,9 @@ impl MuteListeners {
                 // scope). Only the absence of both is a real problem.
                 trace!(
                     "Listener register skipped for device {} selector {:#x}: status {}",
-                    device_id, addr.mSelector, status
+                    device_id,
+                    addr.mSelector,
+                    status
                 );
             }
         }
