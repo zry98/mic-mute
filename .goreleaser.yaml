@@ -1,0 +1,48 @@
+---
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+
+version: 2
+
+project_name: mic-mute
+
+before:
+  hooks:
+    - rustup default stable
+    - cargo fetch --locked
+
+builds:
+  - id: mic-mute
+    builder: rust
+    binary: mic-mute
+    tool: cargo
+    command: build
+    targets:
+      - aarch64-apple-darwin
+    flags:
+      - --release
+      - --locked
+
+archives:
+  - id: mic-mute
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Target }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: zry98
+    name: mic-mute
+  draft: true
+  prerelease: auto
